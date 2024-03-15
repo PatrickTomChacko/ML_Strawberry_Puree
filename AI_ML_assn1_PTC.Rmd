@@ -1,0 +1,366 @@
+---
+title: "AI/ML Assn1"
+author: "Patrick Tom Chacko 22200149"
+date: "2023-02-25"
+output: html_document
+---
+### Exercise 1
+#### 1)
+
+As we know that t-distributed Stochastic neighbourhood learning is used to decompose high dimensional data to a lower dimension with a purpose of visualisation and not for modelling.
+
+With the help in R we can see that t-SNE calculates euclidean distance and hence groups the nearest points, which also means it is not learning a model, implying no parameters are generated in the process, hence there is nothing to pass on to the test set.
+
+The test set when implied with t-SNE will have its own clustering based on the euclidean distance between the points, so t-SNE is not a good option to train the model, other algorithms such as PCA should be used for high dimensional data.
+
+Also the clusters are not fixed, each time the chain starts at random we obtain different clusters, as we saw in the tutorial, again a reason not to consider t-SNE.
+
+#### 2)
+```{r}
+x_w <- matrix( c(-0.70,0.18,0.65,1.12,0.89,0.52,-0.31,0.29,-0.60,2.13),nrow = 5,byrow = T)
+x_int <- c(1,1,1,1,1)                #adding coefficient for intercept term
+x <- cbind(x_int,x_w)
+x
+y <- c(0,1,1,0,1)
+w <- matrix(c(0.5,1.1,-0.3))#removing the intercept
+```
+
+```{r}
+x%*%w
+```
+
+Let us now calculate Pr(y=1|x) = exp(t(x)*w)/ 1+exp(t(x)*w) where t(x) is transpose of x and * here is matrix mult
+
+Since we are given 5 observed classification of X in column y, we can be sure that transpose of X is given so we dont  need to take transpose for our formula.
+
+```{r}
+pr <- exp(x%*%w)/( 1+exp(x%*%w) )            
+```
+
+Using our definiton let us calculate the average cross-entropy loss
+```{r}
+sum = 0
+for (i in 1:5) {
+sum = sum + (y[i]*log(pr[i])+(1-y[i])*log(1-pr[i]))
+}  
+N = 5      # we have 5 observations here
+cr_ent_loss <- -sum/N
+cr_ent_loss
+```
+We get a cross entropy loss of 0.6055629 using the definition.
+
+#### b)
+From the definition of misclassification rate we can get the accuracy.
+
+```{r}
+y_hat <- NULL
+y_bar <- NULL
+for (i in 1:5) {
+y_hat[i] <- exp(x[i,]%*%w)/( 1+exp(x[i,]%*%w))
+if(y_hat[i]>0.5){y_bar[i] <- 1;
+  print(y_bar[i])}
+ else y_bar[i] <- 0
+}  
+Accuracy_calc <- cbind(y_hat,y_bar,y)
+colnames(Accuracy_calc) <- c('Pr(y)','Pred_Y','Actual_Y')
+Accuracy_df <- as.data.frame(Accuracy_calc)
+Accuracy_df
+```
+We can see only one observation differs so we would have high accuracy, let us calculate.
+```{r}
+correct <- 0
+for (i in 1:5) {
+if(Accuracy_df$Pred_Y[i] == Accuracy_df$Actual_Y[i]) correct<- correct +1  
+}
+correct/N    #N <-  Total number of observations
+```
+We get an accuracy = 0.6 for this model on the given sample.
+
+### Exercise 2
+
+```{r}
+load("data_hw1_strawberry.RData")   #loaded to global environment
+```
+
+#### C1 classifier  (Standard logistic regression classifier + PCA dimension reduction with Q coordinate vectors.)
+
+```{r}
+X <- train_data[,-c(1)]    # removing the target variable
+dim(X)
+
+```
+```{r}
+class <- as.factor(train_data$target)
+table(class)
+col <- c("darkorange2", "deepskyblue3") # set colors according to classes
+cols <- col[class]
+```
+
+
+```{r}
+col_no <- as.numeric( gsub("x", "", colnames(X)) )
+levels(class)
+```
+
+```{r}
+matplot(t(X), x = col_no, type = "l", lty = 1, col = adjustcolor(cols, 0.5), main = "Training Dataset")
+legend("topright", fill = col, legend = levels(class), bty = "n") # add legend
+```
+
+
+
+Let's apply range normalisation to our training dataset, (its not gonna hurt our estimates)
+```{r}
+range_norm <- function(x, a = 0, b = 1) {
+( (x - min(x)) / (max(x) - min(x)) )*(b - a) + a
+}
+X_norm <- apply(X, 2, range_norm)
+matplot(t(X_norm), x = col_no, type = "l", lty = 1, col = adjustcolor(cols, 0.5),  main = "Normalised training dataset")
+legend("topleft", fill = col, legend = levels(class), bty = "n") # add legend
+
+```
+
+So now we can se that our training data is normalised
+
+For cross-validation I am going to use the misclassification rate 
+ i.e. #false predicted/number of observations
+
+```{r, error=FALSE}
+qvec <- 2:10   #range of Q given in question
+B <- 100     #number of replicates
+err_val <- matrix(NA, B, length(qvec)+1)    #We need 10 columns but here number starts from 1:9 we want from 2:10
+best_q <- rep(NA,10)        #To store overall misclassifiction rate
+
+N1 <-nrow(X_norm)        #Total training data set 
+N_t <- round(N1*(2/3))  #training set 2/3 
+N_c <- N1 - N_t         #1/3 of train_data for cross validation 
+set <- sample(N1,N_t)    #out of N1 take a sample of N_t 
+
+for ( b in 1:B ){
+# sample randomly training, validation and test data
+set <- sample(N1,N_t)    #out of N1 take a sample of N_t
+X_val= X_norm[-set,]
+Y_val = train_data$target[-set]
+X_train <- X_norm[set,]
+Y_train <- class[set]
+dat_train <- data.frame(Y_train,X_train)
+
+for ( Q in qvec ) {
+  
+  pca <- prcomp(X_train) # pca
+  
+  xz_train <- pca$x[,1:Q]    # extract first Q principal component
+  dat_train <- data.frame(Y_train, xz_train) # new representation of the training data
+  
+  # Fitting our model with lower dimensional input variable
+  #1000 iterations to ensure convergence
+  C1 <- glm(Y_train ~ ., data = dat_train, family = binomial, #fit model
+  control = list(maxit = 100))
+  
+  # Model is ready to predict let's use our validation set, but first need to map
+  xz_val <- predict(pca, X_val)[,1:Q]
+  
+  # Now let us predict 
+  preds <- predict.glm(C1, newdata = data.frame(xz_val), type = "response")
+  
+  y_test_hat <- ifelse(preds > 0.5, "Strawberry","Adulterated")  
+  
+  # Now calculate the misclassification rate
+  calc <- table(Y_val, y_test_hat)
+
+  
+  miscalculation = (calc[2]+calc[3])/sum(calc)
+  
+  err_val[b,Q] = miscalculation    #not working need another work around
+
+ }
+}
+```
+
+
+```{r, error=FALSE}
+#Now we will find the mean misclassification error for individual Q, and see which one gives minimum
+best_q <- apply(err_val,2,mean)
+best_q
+```
+As expected we got 10 since higher the number of principal components more variation we are able to capture and so the model works with more accuracy.
+
+
+#### C2 classifier (Regularized logistic regression model with L1 penalty function)
+```{r}
+library('glmnet')
+library(e1071) # for 'classAgreement'
+# another way of calculating accuracy
+
+class_acc <- function(y, yhat) {
+tab <- table(y, yhat)
+classAgreement(tab)$diag
+}
+```
+Calculating loss function corressponding to binary cross entropy. 
+```{r}
+loss <- function(y, prob) {
+-sum( y*log(prob) + (1-y)*log(1-prob) )/length(y)
+}
+```
+
+
+```{r}
+tau <- 0.5        #threshold
+S <- 100           #Sample size
+lambda <- exp(seq(-3.5, -5.5, length = S-1)) # set sequence for lambda with log pace
+
+lambda <- c(lambda, 0) # this corresponds to plain logistic regression
+acc_train <- acc_val <- loss_train <- loss_val <- matrix(NA, B, S)   #placeholders
+lambda_best <- rep(NA, B)
+```
+
+```{r}
+x <- X_norm         #our normalised training dataset
+y <- as.factor(train_data$target)      #adulterated or strawberry
+y <-ifelse(y == "adulterated",0,1)     #mapping my factors to numbers due to requirement of algorithm
+```
+0 ~ Adulterated
+1 ~ Strawberry 
+
+```{r}
+for ( b in 1:B ) {
+# sample train and validation data
+train <- sample(N1,N_t)    #out of N1 take a sample of N_t
+val <- setdiff(1:N1,train) #remaining give to val
+#sort(union(train,val))  helps to verify uniqueness
+
+
+# train the model
+C2 <- glmnet(x[train,], y[train], family = "binomial", alpha = 1, lambda = lambda)
+
+# obtain predicted classes for training and validation data
+p_train <- predict(C2, newx = x[train,], type = "response")
+y_train <- apply(p_train, 2, function(v) ifelse(v > tau, 1, 0)) #if prob is greater than Tau assign 1 or else 0,
+
+
+# prediction for validation set
+p_val <- predict(C2, newx = x[val,], type = "response")
+y_val <- apply(p_val, 2, function(v) ifelse(v > tau, 1, 0))
+
+
+# estimate classification accuracy
+acc_train[b,] <- sapply( 1:S, function(s) class_acc(y[train], y_train[,s]) ) #this function gives accuracy
+
+#similarly find accuracy of validation set
+acc_val[b,] <- sapply( 1:S, function(s) class_acc(y[val], y_val[,s]) )
+
+# compute loss
+loss_train[b,] <- sapply( 1:S, function(s) loss(y[train], p_train[,s]) )
+loss_val[b,] <- sapply( 1:S, function(s) loss(y[val], p_val[,s]) )
+
+
+# select lambda which maximizes classification accuracy on validation data
+best <- which.max(acc_val[b,])
+lambda_best[b] <- lambda[best]
+}
+```
+
+Let us look at lambda which maximises classification accuracy
+```{r}
+lambda_star <- lambda[ which.max( colMeans(acc_val) ) ]
+round(lambda_star,2)
+```
+So we get that lambda = 0 maximises the classification accuracy (upto 2 digits here)
+but let us plot lambda also in terms of lease loss/cross entropy function of our logistic model. Let us plot this 
+
+```{r}
+matplot(x = lambda, t(acc_train), type = "l", lty = 1, ylab = "Accuracy", xlab = "Lambda",
+col = adjustcolor("black", 0.05), log = "y") # accuracy on log scale
+matplot(x = lambda, t(acc_val), type = "l",ylim = c(0,1), lty = 1,
+col = adjustcolor("deepskyblue2", 0.05), add = TRUE, log = "y")
+lines(lambda, colMeans(acc_train), col = "black", lwd = 2)
+lines(lambda, colMeans(acc_val), col = "deepskyblue3", lwd = 2)
+legend("topright", legend = c("Training accuracy", "Validation accuracy"),
+fill = c("black", "deepskyblue2"), bty = "n")
+```
+
+We can indeed see that lambda at 0 gives maximal accuracy and then the accuracy decreases as lambda increases, so lets go further on our investigation, but this time we will consider the lambda that minimises the loss/ cross entropy function and that is our interest hyper-parameter.
+
+It gives us the highest accurate parameters estimate allowing us to fit new data with apt tuning.
+```{r}
+matplot(x = lambda, t(loss_train), type = "l", lty = 1, ylab = "Loss", xlab = "Lambda",
+col = adjustcolor("black", 0.05))
+matplot(x = lambda, t(loss_val), type = "l", lty = 1,
+col = adjustcolor("deepskyblue2", 0.05), add = TRUE, log = "y")
+lines(lambda, colMeans(loss_train), col = "black", lwd = 2)
+lines(lambda, colMeans(loss_val), col = "deepskyblue3", lwd = 2)
+legend("bottomright", legend = c("Training loss", "Validation loss"),
+fill = c("black", "deepskyblue2"), bty = "n")
+# plot optimal lambdas
+abline(v = lambda_star, col = "magenta")
+abline(v = lambda[ which.min( colMeans(loss_val) ) ], col = "red")
+
+```
+
+We have plotted the two values of lambda corresponding to max classification accuracy and the red one corresponding to minimum loss, hence we select red one according to our need that lambda = 4 is good hyperparameter for our model.
+
+Let us train our model again using the hyper-parameter
+```{r}
+C2 <- glmnet(X_norm, y, family = "binomial", lambda = lambda_star)
+```
+
+
+#### Evaluation of the classifiers
+##### C1 classifier
+```{r}
+X_test <- test_data[,-c(1)]
+X_test <-  apply(X_test, 2, range_norm)
+xz_test <- predict(pca, X_test)[,1:10]   #mapping to lower space using optimal Q
+# Now let us predict 
+  preds <- predict.glm(C1, newdata = data.frame(xz_test), type = "response")
+  
+  y_test_hat <- ifelse(preds > 0.5, "Strawberry","Adulterated")  
+  
+  # Now calculate the misclassification rate
+  calc <- table(test_data$target, y_test_hat)
+  miscalculation = (calc[2]+calc[3])/sum(calc)
+  miscalculation
+```
+Here we can see that our classifier C1 with optimal value of Q =10, performs good, it has a cross entropy of 9.2%
+
+which gives us an accuracy of 90.8%
+
+Let us see the table
+```{r}
+calc
+```
+There were 132 strawberries purees out of which 108 are correctly classified by the classifier C1 and 24 strawberries which were classified wrongly or as adulterated by the same classifier.
+
+```{r}
+108/132
+```
+81.8% of strawberry purees have been classified correctly
+
+Thus we have not so bad result by our best selected classifier 1 . Now let us look on C2
+
+##### C2 classifier
+
+```{r}
+# prediction for validation set
+p_test <- predict(C2, newx = X_test, type = "response")
+y_test_pred <- apply(p_test, 2, function(v) ifelse(v > tau, 1, 0))
+
+
+# estimate classification accuracy
+diff <- class_acc(y_test_pred,test_data$target) #this function gives accuracy
+diff
+```
+We can see that the classifer C2 gives a lower accuracy than C1, this says it only classifies 77.57% of strawberry purees correctly. Let us look at the table to further know about the strawberry purees classified correctly
+
+```{r}
+table(y_test_pred,test_data$target)
+```
+Looking at the table gives us shock! Out of 132 strawberries only 3 have been misclassified 
+```{r}
+129/132
+```
+a 97.7% accuracy of correctly classifying strawberries. 
+
+As here scientist are interested in discriminating between purees in this case they should use classifier C1 , which has a good classification accuracy but if the scientists just wanted to seperate and identify if a purees is strawbery then they should prefer C2 as it is better strawberry puree classifier.
+
